@@ -29,6 +29,8 @@ if __name__ == '__main__':
         install_requires=[
             'django-utils2>=2.2.1',
             'six',
+            'django-simple-history==1.9.0',
+            'django-import-export==0.5.1',
         ],
         tests_require=['pytest'],
         setup_requires=['pytest-runner'],

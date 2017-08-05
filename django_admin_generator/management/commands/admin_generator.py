@@ -1,15 +1,24 @@
+# A customized version of django-admin-generator
+# https://github.com/WoLpH/django-admin-generator
+# Standard Library
+import os
 import re
 import sys
+
+# Third Party Stuff
 import six
-from django_utils.management.commands import base_command
 from django.db import models
+from django_utils.management.commands import base_command
 
 try:  # pragma: no cover
     from django.db.models.loading import get_models
 except ImportError:  # pragma: no cover
     def get_models(app):
         for model in app.get_models():
-            yield model
+            if 'Historical' in str(model):
+                continue
+            else:
+                yield model
 
 if hasattr(models, 'get_apps'):  # pragma: no cover
     def get_apps():
@@ -43,22 +52,32 @@ DATE_HIERARCHY_NAMES = (
     'created_at',
 )
 
-PREPOPULATED_FIELD_NAMES = ()
-
 LIST_FILTER_THRESHOLD = 25
 RAW_ID_THRESHOLD = 100
 NO_QUERY_DB = False
 
-PRINT_IMPORTS = '''# vim: set fileencoding=utf-8 :
-from django.contrib import admin
+PRINT_IMPORTS = '''from django.contrib import admin
+from import_export.admin import ExportMixin
+from simple_history.admin import SimpleHistoryAdmin
 
 from . import models
+
+
+class ExportAdmin(ExportMixin, admin.ModelAdmin):
+    """Adds export funcationality in the admin"""
+    save_on_top = True
+
+
+class HistoryExportAdmin(ExportAdmin, SimpleHistoryAdmin):
+    """Adds export & history logging/viewing funcationality in the admin"""
+    pass
+
 '''
 
 PRINT_ADMIN_CLASS = '''
 
-class %(name)sAdmin(admin.ModelAdmin):
-%(class_)s
+class {name}Admin({base_admin}):
+{class_}
 '''
 
 PRINT_ADMIN_REGISTRATION_METHOD = '''
@@ -81,6 +100,7 @@ PRINT_ADMIN_PROPERTY = '''
 
 
 class AdminApp(object):
+
     def __init__(self, app, model_res, **options):
         self.app = app
         self.model_res = model_res
@@ -108,13 +128,21 @@ class AdminApp(object):
         else:
             return self.__unicode__()
 
+    def get_content(self):
+        return self.__str__()
+
     def _unicode_generator(self):
         yield PRINT_IMPORTS
 
         admin_model_names = []
         for admin_model in self:
-            yield PRINT_ADMIN_CLASS % dict(
+            base_admin = 'ExportAdmin'
+            if admin_model.has_history:
+                base_admin = 'HistoryExportAdmin'
+
+            yield PRINT_ADMIN_CLASS.format(
                 name=admin_model.name,
+                base_admin=base_admin,
                 class_=admin_model,
             )
             admin_model_names.append(admin_model.name)
@@ -126,6 +154,9 @@ class AdminApp(object):
             if len(row) > MAX_LINE_WIDTH:
                 row = PRINT_ADMIN_REGISTRATION_LONG % dict(name=name)
             yield row
+
+        # Add an empty line at the end of the file
+        yield '\n'
 
     def __repr__(self):
         return '<%s[%s]>' % (
@@ -148,7 +179,6 @@ class AdminModel(object):
                  list_filter_threshold=LIST_FILTER_THRESHOLD,
                  search_field_names=SEARCH_FIELD_NAMES,
                  date_hierarchy_names=DATE_HIERARCHY_NAMES,
-                 prepopulated_field_names=PREPOPULATED_FIELD_NAMES,
                  no_query_db=NO_QUERY_DB, **options):
         self.model = model
         self.list_display = []
@@ -161,8 +191,8 @@ class AdminModel(object):
         self.raw_id_threshold = raw_id_threshold
         self.list_filter_threshold = list_filter_threshold
         self.date_hierarchy_names = date_hierarchy_names
-        self.prepopulated_field_names = prepopulated_field_names
         self.query_db = not no_query_db
+        self.has_history = True if hasattr(self.model, 'history') else False
 
     def __repr__(self):
         return '<%s[%s]>' % (
@@ -303,19 +333,6 @@ class AdminModel(object):
                 self.date_hierarchy = field_name
                 break
 
-        for k in sorted(self.prepopulated_field_names):
-            k, vs = k.split('=', 1)
-            vs = vs.split(',')
-            if k in field_names:
-                incomplete = False
-                for v in vs:
-                    if v not in field_names:
-                        incomplete = True
-                        break
-
-                if not incomplete:
-                    self.prepopulated_fields[k] = vs
-
         self.processed = True
 
 
@@ -336,12 +353,6 @@ class Command(base_command.CustomBaseCommand):
             '-d', '--date-hierarchy', action='append',
             default=DATE_HIERARCHY_NAMES,
             help='A field named like this will be set as `date_hierarchy`'
-            ' [default: %default]')
-        parser.add_argument(
-            '-p', '--prepopulated-fields', action='append',
-            default=PREPOPULATED_FIELD_NAMES,
-            help='These fields will be prepopulated by the other field.'
-            'The field names can be specified like `spam=eggA,eggB,eggC`'
             ' [default: %default]')
         parser.add_argument(
             '-l', '--list-filter-threshold', type=int,
@@ -392,4 +403,13 @@ class Command(base_command.CustomBaseCommand):
         self.handle_app(app, model_res, **kwargs)
 
     def handle_app(self, app, model_res, **options):
-        print(AdminApp(app, model_res, **options))
+        """Generates content for `admin.py` and writes it
+
+        If `admin.py` doesn't exist, then a new one is created,
+        otherwise content is appended to the original file
+        """
+        filename = '{}/admin.py'.format(app.path)
+        mode = 'a' if os.path.exists(filename) else 'w'
+        admin_app = AdminApp(app, model_res, **options)
+        with open(filename, mode) as f:
+            f.write(admin_app.get_content())
