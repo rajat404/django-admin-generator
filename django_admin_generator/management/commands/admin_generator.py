@@ -43,9 +43,7 @@ DATE_HIERARCHY_NAMES = (
     'created_at',
 )
 
-PREPOPULATED_FIELD_NAMES = (
-    'slug=name',
-)
+PREPOPULATED_FIELD_NAMES = ()
 
 LIST_FILTER_THRESHOLD = 25
 RAW_ID_THRESHOLD = 100
@@ -395,5 +393,3 @@ class Command(base_command.CustomBaseCommand):
 
     def handle_app(self, app, model_res, **options):
         print(AdminApp(app, model_res, **options))
-
-
